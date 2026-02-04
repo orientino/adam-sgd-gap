@@ -9,6 +9,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+def norm(x):
+    return F.rms_norm(x, (x.size(-1),))
+
+
 def posemb_sincos_2d(h, w, width, temperature=10_000.0):
     """https://github.com/google-research/big_vision/blob/main/big_vision/models/vit.py#L34"""
     y, x = np.mgrid[:h, :w]
@@ -63,12 +67,11 @@ class MLP(nn.Module):
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
         self.fc1 = nn.Linear(in_features, hidden_features)
-        self.act = nn.GELU()
         self.fc2 = nn.Linear(hidden_features, out_features)
 
     def forward(self, x):
         x = self.fc1(x)
-        x = self.act(x)
+        x = F.relu(x).square()
         x = self.fc2(x)
         return x
 
@@ -76,14 +79,12 @@ class MLP(nn.Module):
 class TransformerBlock(nn.Module):
     def __init__(self, dim, n_heads, mlp_ratio=4.0):
         super().__init__()
-        self.norm1 = nn.LayerNorm(dim, eps=1e-6)
         self.attn = Attention(dim, n_heads=n_heads)
-        self.norm2 = nn.LayerNorm(dim, eps=1e-6)
         self.mlp = MLP(in_features=dim, hidden_features=int(dim * mlp_ratio))
 
     def forward(self, x):
-        x = x + self.attn(self.norm1(x))
-        x = x + self.mlp(self.norm2(x))
+        x = x + self.attn(norm(x))
+        x = x + self.mlp(norm(x))
         return x
 
 
@@ -117,7 +118,6 @@ class VisionTransformer(nn.Module):
         self.blocks = nn.ModuleList(
             [TransformerBlock(d_embed, n_heads, mlp_ratio) for _ in range(n_layers)]
         )
-        self.norm = nn.LayerNorm(d_embed, eps=1e-6)
         self.head = nn.ModuleList(
             [
                 nn.Linear(d_embed, d_embed),
@@ -148,14 +148,14 @@ class VisionTransformer(nn.Module):
         x = x + self.pos_embed
         for block in self.blocks:
             x = block(x)
-        x = self.norm(x)
+        x = norm(x)
         x = x.mean(dim=1)
         for layer in self.head:
             x = layer(x)
         return x
 
 
-def vit_small_patch16_224(d_embed=384, n_layers=6, n_heads=6, n_classes=1000):
+def vit_small_patch16_224(d_embed=384, n_layers=12, n_heads=6, n_classes=1000):
     return VisionTransformer(
         img_size=224,
         patch_size=16,

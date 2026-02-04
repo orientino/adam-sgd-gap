@@ -25,8 +25,7 @@ micromamba activate imagenet
 
 BS=256  # per GPU (total = 256 * 4 = 1024)
 LR=0.001
-WD=0.0001
-EPOCHS=50
+EPOCHS=90
 WARM_RATIO=0.1
 
 DIR_DATA=/project/home/p200535/data/imagenet1k
@@ -46,5 +45,5 @@ torchrun \
     --warm_ratio $WARM_RATIO \
     --dir_data $DIR_DATA \
     --dir_output $DIR_OUTPUT \
-    --num_workers 16 \
+    --n_workers 16 \
     --compile
