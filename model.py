@@ -21,14 +21,14 @@ def posemb_sincos_2d(h, w, width, temperature=10_000.0):
 
 
 class PatchEmbed(nn.Module):
-    def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dim=384):
+    def __init__(self, img_size=224, patch_size=16, in_chans=3, d_embed=384):
         super().__init__()
         self.img_size = img_size
         self.patch_size = patch_size
         self.grid_size = img_size // patch_size
-        self.num_patches = self.grid_size**2
+        self.n_patches = self.grid_size**2
         self.proj = nn.Conv2d(
-            in_chans, embed_dim, kernel_size=patch_size, stride=patch_size
+            in_chans, d_embed, kernel_size=patch_size, stride=patch_size
         )
 
     def forward(self, x):
@@ -39,16 +39,16 @@ class PatchEmbed(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(self, dim, num_heads=8):
+    def __init__(self, dim, n_heads=8):
         super().__init__()
-        self.num_heads = num_heads
-        self.head_dim = dim // num_heads
+        self.n_heads = n_heads
+        self.d_head = dim // n_heads
         self.qkv = nn.Linear(dim, dim * 3, bias=True)
         self.proj = nn.Linear(dim, dim, bias=True)
 
     def forward(self, x):
         B, N, C = x.shape
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim)
+        qkv = self.qkv(x).reshape(B, N, 3, self.n_heads, self.d_head)
         qkv = qkv.permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
         x = F.scaled_dot_product_attention(q, k, v, dropout_p=0.0)
@@ -74,10 +74,10 @@ class MLP(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, dim, num_heads, mlp_ratio=4.0):
+    def __init__(self, dim, n_heads, mlp_ratio=4.0):
         super().__init__()
         self.norm1 = nn.LayerNorm(dim, eps=1e-6)
-        self.attn = Attention(dim, num_heads=num_heads)
+        self.attn = Attention(dim, n_heads=n_heads)
         self.norm2 = nn.LayerNorm(dim, eps=1e-6)
         self.mlp = MLP(in_features=dim, hidden_features=int(dim * mlp_ratio))
 
@@ -93,36 +93,36 @@ class VisionTransformer(nn.Module):
         img_size=224,
         patch_size=16,
         in_chans=3,
-        num_classes=1000,
-        embed_dim=384,
-        depth=12,
-        num_heads=6,
+        n_classes=1000,
+        d_embed=384,
+        n_layers=12,
+        n_heads=6,
         mlp_ratio=4.0,
     ):
         super().__init__()
-        self.num_classes = num_classes
-        self.embed_dim = embed_dim
+        self.n_classes = n_classes
+        self.d_embed = d_embed
 
         self.patch_embed = PatchEmbed(
             img_size=img_size,
             patch_size=patch_size,
             in_chans=in_chans,
-            embed_dim=embed_dim,
+            d_embed=d_embed,
         )
         grid_size = self.patch_embed.grid_size
-        pos_embed = posemb_sincos_2d(grid_size, grid_size, embed_dim)
+        pos_embed = posemb_sincos_2d(grid_size, grid_size, d_embed)
         pos_embed = torch.from_numpy(pos_embed).float().unsqueeze(0)
         self.register_buffer("pos_embed", pos_embed)
 
         self.blocks = nn.ModuleList(
-            [TransformerBlock(embed_dim, num_heads, mlp_ratio) for _ in range(depth)]
+            [TransformerBlock(d_embed, n_heads, mlp_ratio) for _ in range(n_layers)]
         )
-        self.norm = nn.LayerNorm(embed_dim, eps=1e-6)
+        self.norm = nn.LayerNorm(d_embed, eps=1e-6)
         self.head = nn.ModuleList(
             [
-                nn.Linear(embed_dim, embed_dim),
+                nn.Linear(d_embed, d_embed),
                 nn.Tanh(),
-                nn.Linear(embed_dim, num_classes),
+                nn.Linear(d_embed, n_classes),
             ]
         )
         self._init_weights()
@@ -155,15 +155,15 @@ class VisionTransformer(nn.Module):
         return x
 
 
-def vit_small_patch16_224(num_classes=1000):
+def vit_small_patch16_224(d_embed=384, n_layers=6, n_heads=6, n_classes=1000):
     return VisionTransformer(
         img_size=224,
         patch_size=16,
         in_chans=3,
-        num_classes=num_classes,
-        embed_dim=384,
-        depth=12,
-        num_heads=6,
+        d_embed=d_embed,
+        n_classes=n_classes,
+        n_heads=n_heads,
+        n_layers=n_layers,
         mlp_ratio=4.0,
     )
 

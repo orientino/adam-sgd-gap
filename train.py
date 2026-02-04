@@ -13,6 +13,7 @@ import torch.nn as nn
 import wandb
 from torch.amp import autocast
 from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.optim import SGD, Adam
 
 from data import get_dataloaders
 from model import vit_small_patch16_224
@@ -38,12 +39,12 @@ def cosine_scheduler(base_lr, final_lr, total_steps, warm_steps=0):
     return schedule
 
 
-def mixup(x, y, num_classes, p=0.2):
+def mixup(x, y, n_classes, p=0.2):
     """https://github.com/google-research/big_vision/blob/main/big_vision/utils.py#L1146"""
     a = np.random.beta(p, p)
     a = max(a, 1 - a)  # ensure a >= 0.5 so that `unrolled x` is dominant
     mixed_x = a * x + (1 - a) * x.roll(1, dims=0)
-    y_onehot = torch.zeros(y.size(0), num_classes, device=y.device)
+    y_onehot = torch.zeros(y.size(0), n_classes, device=y.device)
     y_onehot.scatter_(1, y.unsqueeze(1), 1)  # one-hot encoding
     mixed_y = a * y_onehot + (1 - a) * y_onehot.roll(1, dims=0)
     return mixed_x, mixed_y
@@ -55,13 +56,15 @@ def main():
     parser.add_argument("--bs", type=int, default=256)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--wd", type=float, default=0.0)
+    parser.add_argument("--mom", type=float, default=0.9)
+    parser.add_argument("--optim", type=str, default="adam")
     parser.add_argument("--epochs", type=int, default=90)
     parser.add_argument("--warm_ratio", type=float, default=0.1)
     parser.add_argument("--mixup_p", type=float, default=0.2)
     parser.add_argument("--grad_clip", type=float, default=1.0)
     parser.add_argument("--dir_output", type=str, required=True)
     parser.add_argument("--dir_data", type=str, required=True)
-    parser.add_argument("--num_workers", type=int, default=8)
+    parser.add_argument("--n_workers", type=int, default=8)
     parser.add_argument("--log_interval", type=int, default=100)
     parser.add_argument("--compile", action="store_true")
     args = parser.parse_args()
@@ -73,28 +76,29 @@ def main():
     torch.backends.cudnn.benchmark = True
     if rank == 0:
         os.makedirs(args.dir_output, exist_ok=True)
-        wandb.init(project="imagenet1k")
+        wandb.init(project="adam-sgd-gap")
         wandb.config.update(args)
 
     tr_loader, vl_loader, steps_per_epoch = get_dataloaders(
         dir_data=args.dir_data,
         batch_size_per_gpu=args.bs,
-        num_workers=args.num_workers,
+        n_workers=args.n_workers,
         pin_memory=True,
         distributed=True,
     )
 
-    model = vit_small_patch16_224(num_classes=1000).cuda()
+    model = vit_small_patch16_224(n_classes=1000).cuda()
     model = DDP(model, device_ids=[local_rank], output_device=local_rank)
     model = torch.compile(model) if args.compile else model
     criterion = nn.CrossEntropyLoss()
 
     total_steps = args.epochs * steps_per_epoch
-    optimizer = torch.optim.Adam(
-        model.parameters(),
-        lr=args.lr,
-        betas=(0.9, 0.999),
-    )
+    if args.optim == "sgd":
+        optimizer = SGD(model.parameters(), lr=args.lr, momentum=args.mom)
+    elif args.optim == "adam":
+        optimizer = Adam(model.parameters(), lr=args.lr, betas=(args.mom, args.mom))
+    else:
+        raise ValueError(f"Unknown optim: {args.optim}")
     scheduler = cosine_scheduler(
         base_lr=args.lr,
         final_lr=0,
@@ -117,7 +121,7 @@ def main():
                 p["lr"] = lr
 
             x, y = x.cuda(non_blocking=True), y.cuda(non_blocking=True)
-            x, y_soft = mixup(x, y, num_classes=1000, p=args.mixup_p)
+            x, y_soft = mixup(x, y, n_classes=1000, p=args.mixup_p)
             with autocast("cuda", dtype=torch.bfloat16):
                 logits = model(x)
                 loss = -torch.sum(
@@ -166,16 +170,10 @@ def main():
                     ).item(),
                 }
             )
-            ckpt = {
-                "epoch": epoch,
-                "model": model.module.state_dict(),
-                "optimizer": optimizer.state_dict(),
-                "args": args,
-            }
-            torch.save(ckpt, os.path.join(args.dir_output, "last.pth"))
+            torch.save(model.module.state_dict(), os.path.join(args.dir_output, "last.pth"))
             if vl_acc1 > best_acc:
                 best_acc = vl_acc1
-                torch.save(ckpt, os.path.join(args.dir_output, "best.pth"))
+                torch.save(model.module.state_dict(), os.path.join(args.dir_output, "best.pth"))
 
     dist.destroy_process_group()
 

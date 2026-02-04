@@ -16,7 +16,7 @@ IMAGENET_TRAIN_SAMPLES = 1_281_167
 def get_dataloaders(
     dir_data,
     batch_size_per_gpu=256,
-    num_workers=8,
+    n_workers=8,
     pin_memory=True,
     distributed=True,
 ):
@@ -65,14 +65,14 @@ def get_dataloaders(
     tr_loader = DataLoader(
         tr_dataset,
         batch_size=batch_size_per_gpu,
-        num_workers=num_workers,
+        num_workers=n_workers,
         pin_memory=pin_memory,
         persistent_workers=True,
     )
     vl_loader = DataLoader(
         vl_dataset,
         batch_size=batch_size_per_gpu,
-        num_workers=num_workers,
+        num_workers=n_workers,
         pin_memory=pin_memory,
         persistent_workers=True,
     )
