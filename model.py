@@ -47,8 +47,8 @@ class Attention(nn.Module):
         super().__init__()
         self.n_heads = n_heads
         self.d_head = dim // n_heads
-        self.qkv = nn.Linear(dim, dim * 3, bias=True)
-        self.proj = nn.Linear(dim, dim, bias=True)
+        self.qkv = nn.Linear(dim, dim * 3, bias=False)
+        self.proj = nn.Linear(dim, dim, bias=False)
 
     def forward(self, x):
         B, N, C = x.shape
@@ -66,8 +66,8 @@ class MLP(nn.Module):
         super().__init__()
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
-        self.fc1 = nn.Linear(in_features, hidden_features)
-        self.fc2 = nn.Linear(hidden_features, out_features)
+        self.fc1 = nn.Linear(in_features, hidden_features, bias=False)
+        self.fc2 = nn.Linear(hidden_features, out_features, bias=False)
 
     def forward(self, x):
         x = self.fc1(x)
@@ -120,9 +120,9 @@ class VisionTransformer(nn.Module):
         )
         self.head = nn.ModuleList(
             [
-                nn.Linear(d_embed, d_embed),
+                nn.Linear(d_embed, d_embed, bias=False),
                 nn.Tanh(),
-                nn.Linear(d_embed, n_classes),
+                nn.Linear(d_embed, n_classes, bias=False),
             ]
         )
         self._init_weights()
@@ -132,16 +132,10 @@ class VisionTransformer(nn.Module):
         torch.nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
         for block in self.blocks:
             nn.init.xavier_uniform_(block.attn.qkv.weight)
-            nn.init.zeros_(block.attn.qkv.bias)
             nn.init.xavier_uniform_(block.attn.proj.weight)
-            nn.init.zeros_(block.attn.proj.bias)
             nn.init.xavier_uniform_(block.mlp.fc1.weight)
-            nn.init.normal_(block.mlp.fc1.bias, std=1e-6)
             nn.init.xavier_uniform_(block.mlp.fc2.weight)
-            nn.init.normal_(block.mlp.fc2.bias, std=1e-6)
-        nn.init.zeros_(self.head[0].bias)
         nn.init.zeros_(self.head[2].weight)
-        nn.init.zeros_(self.head[2].bias)
 
     def forward(self, x):
         x = self.patch_embed(x)
