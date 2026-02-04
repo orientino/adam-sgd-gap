@@ -25,7 +25,10 @@ micromamba activate imagenet
 
 BS=256  # per GPU (total = 256 * 4 = 1024)
 LR=0.001
-EPOCHS=90
+EP=90
+MOM=0.9
+OPT=adam
+DATA=i1k
 WARM_RATIO=0.1
 
 DIR_DATA=/project/home/p200535/data/imagenet1k
@@ -41,7 +44,11 @@ torchrun \
     train.py \
     --bs $BS \
     --lr $LR \
-    --epochs $EPOCHS \
+    --mom $MOM \
+    --aug \
+    --opt $OPT \
+    --data $DATA \
+    --epochs $EP \
     --warm_ratio $WARM_RATIO \
     --dir_data $DIR_DATA \
     --dir_output $DIR_OUTPUT \

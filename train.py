@@ -57,7 +57,9 @@ def main():
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--wd", type=float, default=0.0)
     parser.add_argument("--mom", type=float, default=0.9)
-    parser.add_argument("--optim", type=str, default="adam")
+    parser.add_argument("--aug", action="store_true")
+    parser.add_argument("--opt", type=str, default="adam")
+    parser.add_argument("--data", type=str, default="i1k")
     parser.add_argument("--epochs", type=int, default=90)
     parser.add_argument("--warm_ratio", type=float, default=0.1)
     parser.add_argument("--mixup_p", type=float, default=0.2)
@@ -79,26 +81,26 @@ def main():
         wandb.init(project="adam-sgd-gap")
         wandb.config.update(args)
 
-    tr_loader, vl_loader, steps_per_epoch = get_dataloaders(
+    tr_loader, vl_loader, n_classes, steps_per_epoch = get_dataloaders(
+        dataset=args.data,
         dir_data=args.dir_data,
-        batch_size_per_gpu=args.bs,
+        batch_size=args.bs,
         n_workers=args.n_workers,
-        pin_memory=True,
-        distributed=True,
+        aug=args.aug,
     )
 
-    model = vit_small_patch16_224(n_classes=1000).cuda()
+    model = vit_small_patch16_224(n_classes=n_classes).cuda()
     model = DDP(model, device_ids=[local_rank], output_device=local_rank)
     model = torch.compile(model) if args.compile else model
     criterion = nn.CrossEntropyLoss()
 
     total_steps = args.epochs * steps_per_epoch
-    if args.optim == "sgd":
+    if args.opt == "sgd":
         optimizer = SGD(model.parameters(), lr=args.lr, momentum=args.mom)
-    elif args.optim == "adam":
+    elif args.opt == "adam":
         optimizer = Adam(model.parameters(), lr=args.lr, betas=(args.mom, args.mom))
     else:
-        raise ValueError(f"Unknown optim: {args.optim}")
+        raise ValueError(f"Unknown optimizer: {args.opt}")
     scheduler = cosine_scheduler(
         base_lr=args.lr,
         final_lr=0,
@@ -121,7 +123,7 @@ def main():
                 p["lr"] = lr
 
             x, y = x.cuda(non_blocking=True), y.cuda(non_blocking=True)
-            x, y_soft = mixup(x, y, n_classes=1000, p=args.mixup_p)
+            x, y_soft = mixup(x, y, n_classes, p=args.mixup_p)
             with autocast("cuda", dtype=torch.bfloat16):
                 logits = model(x)
                 loss = -torch.sum(
@@ -170,10 +172,11 @@ def main():
                     ).item(),
                 }
             )
-            torch.save(model.module.state_dict(), os.path.join(args.dir_output, "last.pth"))
+            weights = model.module.state_dict()
+            torch.save(weights, os.path.join(args.dir_output, "last.pth"))
             if vl_acc1 > best_acc:
                 best_acc = vl_acc1
-                torch.save(model.module.state_dict(), os.path.join(args.dir_output, "best.pth"))
+                torch.save(weights, os.path.join(args.dir_output, "best.pth"))
 
     dist.destroy_process_group()
 
