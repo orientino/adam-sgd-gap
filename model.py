@@ -3,21 +3,9 @@ Vision Transformer Small (ViT-S/16) for ImageNet-1K.
 https://arxiv.org/abs/2205.01580
 """
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-
-def posemb_sincos_2d(h, w, width, temperature=10_000.0):
-    """https://github.com/google-research/big_vision/blob/main/big_vision/models/vit.py#L34"""
-    y, x = np.mgrid[:h, :w]
-    assert width % 4 == 0, "Width must be mult of 4 for sincos posemb"
-    omega = np.arange(width // 4) / (width // 4 - 1)
-    omega = 1.0 / (temperature**omega)
-    y = np.einsum("m,d->md", y.flatten().astype(np.float32), omega)
-    x = np.einsum("m,d->md", x.flatten().astype(np.float32), omega)
-    return np.concatenate([np.sin(x), np.cos(x), np.sin(y), np.cos(y)], axis=1)
 
 
 class PatchEmbed(nn.Module):
@@ -112,9 +100,6 @@ class VisionTransformer(nn.Module):
             d_embed=d_embed,
         )
         grid_size = self.patch_embed.grid_size
-        # pos_embed = posemb_sincos_2d(grid_size, grid_size, d_embed)
-        # pos_embed = torch.from_numpy(pos_embed).float().unsqueeze(0)
-        # self.register_buffer("pos_embed", pos_embed)
         num_patches = grid_size**2
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, d_embed))
         self.norm_embed = nn.RMSNorm(d_embed, eps=1e-6)
