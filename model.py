@@ -53,14 +53,15 @@ class MLP(nn.Module):
         super().__init__()
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
-        self.fc1 = nn.Linear(in_features, hidden_features, bias=False)
+        hidden_features = int(hidden_features * 2 / 3)
+        hidden_features = 256 * ((hidden_features + 255) // 256)  # multiple of 256
+        self.hidden_features = hidden_features
+        self.fc1 = nn.Linear(in_features, 2 * hidden_features, bias=False)
         self.fc2 = nn.Linear(hidden_features, out_features, bias=False)
 
     def forward(self, x):
-        x = self.fc1(x)
-        x = F.gelu(x)
-        x = self.fc2(x)
-        return x
+        x, z = self.fc1(x).split(self.hidden_features, dim=-1)
+        return self.fc2(F.silu(x) * z)
 
 
 class TransformerBlock(nn.Module):
@@ -154,7 +155,7 @@ def vit_small_patch16_224(d_embed=384, n_layers=12, n_heads=6, n_classes=1000):
 
 
 if __name__ == "__main__":
-    model = vit_small_patch16_224()
+    model = vit_small_patch16_224(n_layers=6)
     x = torch.randn(2, 3, 224, 224)
     y = model(x)
     print(f"Input shape: {x.shape}")
