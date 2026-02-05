@@ -72,7 +72,7 @@ def main():
     parser.add_argument("--dir_data", type=str, required=True)
     parser.add_argument("--n_workers", type=int, default=8)
     parser.add_argument("--log_interval", type=int, default=100)
-    parser.add_argument("--eval_interval", type=int, default=0)
+    parser.add_argument("--eval_interval", type=int, default=1000)
     parser.add_argument("--compile", action="store_true")
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()

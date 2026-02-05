@@ -11,7 +11,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --gpus=4
 #SBATCH --partition=gpu
-#SBATCH --time=0-04:00:00
+#SBATCH --time=0-08:00:00
 #SBATCH --output=slurm/%x-%j.out
 
 echo -e "--------------------------------"
@@ -56,7 +56,7 @@ for GPU in 0 1 2 3; do
         --dir_output $DIR_OUTPUT \
         --n_workers 8 \
         --log_interval 10 \
-        --eval_interval 10 \
+        --eval_interval 100 \
         --compile \
         --debug &
 done

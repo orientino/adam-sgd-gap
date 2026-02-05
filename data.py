@@ -14,9 +14,7 @@ from torchvision.datasets import CIFAR10
 
 I1K_TRAIN_SAMPLES = 1_281_167
 C10_TRAIN_SAMPLES = 50_000
-C10_5M_SAMPLES = 6_000_000
-C10_5M_TRAIN_SAMPLES = 5_000_000
-C10_5M_VAL_SAMPLES = 1_000_000
+C5M_SAMPLES = 5_000_000
 
 
 def get_dataloaders(dataset, **kwargs):
@@ -76,10 +74,8 @@ def get_c5m_dataloaders(
         labels.append(data["Y"])
     images = np.concatenate(images)
     labels = np.concatenate(labels)
-    indices = np.random.permutation(C10_5M_SAMPLES)
+    indices = np.random.permutation(len(images))[:C5M_SAMPLES]
     images, labels = images[indices], labels[indices]
-    tr_images, vl_images = images[:C10_5M_TRAIN_SAMPLES], images[C10_5M_TRAIN_SAMPLES:]
-    tr_labels, vl_labels = labels[:C10_5M_TRAIN_SAMPLES], labels[C10_5M_TRAIN_SAMPLES:]
     transform = [
         T.ToPILImage(),
         T.RandomHorizontalFlip(),
@@ -88,10 +84,16 @@ def get_c5m_dataloaders(
         T.ToTensor(),
         T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
     ]
-    transform_vl = T.Compose([transform[0]] + transform[3:])
-    transform_tr = T.Compose(transform if aug else transform_vl)
-    tr_dataset = CIFAR5M(tr_images, tr_labels, transform=transform_tr)
-    vl_dataset = CIFAR5M(vl_images, vl_labels, transform=transform_vl)
+    transform_vl = T.Compose(
+        [
+            T.Resize(224),
+            T.ToTensor(),
+            T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
+        ]
+    )
+    transform_tr = T.Compose(transform if aug else [transform[0]] + transform[3:])
+    tr_dataset = CIFAR5M(images, labels, transform=transform_tr)
+    vl_dataset = CIFAR10(dir_data, train=False, transform=transform_vl, download=True)
     tr_loader = DataLoader(
         tr_dataset,
         batch_size=batch_size,
@@ -104,7 +106,7 @@ def get_c5m_dataloaders(
         shuffle=False,
         num_workers=n_workers,
     )
-    steps_per_epoch = C10_5M_TRAIN_SAMPLES // batch_size
+    steps_per_epoch = C5M_SAMPLES // batch_size
     return tr_loader, vl_loader, 10, steps_per_epoch
 
 
