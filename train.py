@@ -4,7 +4,6 @@ Training script for ViT-S/16 on ImageNet-1k with DDP.
 
 import argparse
 import os
-import time
 
 import numpy as np
 import torch
@@ -20,10 +19,16 @@ from model import vit_small_patch16_224
 
 
 def setup_distributed():
-    dist.init_process_group(backend="nccl")
-    local_rank = int(os.environ["LOCAL_RANK"])
-    torch.cuda.set_device(local_rank)
-    return dist.get_rank(), dist.get_world_size(), local_rank
+    if "WORLD_SIZE" in os.environ:
+        dist.init_process_group(backend="nccl")
+        rank = dist.get_rank()
+        world_size = dist.get_world_size()
+        local_rank = int(os.environ["LOCAL_RANK"])
+        torch.cuda.set_device(local_rank)
+    else:
+        rank, world_size, local_rank = 0, 1, 0
+        torch.cuda.set_device(0)
+    return rank, world_size, local_rank
 
 
 def cosine_scheduler(base_lr, final_lr, total_steps, warm_steps=0):
@@ -55,7 +60,6 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--bs", type=int, default=256)
     parser.add_argument("--lr", type=float, default=0.001)
-    parser.add_argument("--wd", type=float, default=0.0)
     parser.add_argument("--mom", type=float, default=0.9)
     parser.add_argument("--aug", action="store_true")
     parser.add_argument("--opt", type=str, default="adam")
@@ -68,7 +72,9 @@ def main():
     parser.add_argument("--dir_data", type=str, required=True)
     parser.add_argument("--n_workers", type=int, default=8)
     parser.add_argument("--log_interval", type=int, default=100)
+    parser.add_argument("--eval_interval", type=int, default=0)
     parser.add_argument("--compile", action="store_true")
+    parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
 
     rank, world_size, local_rank = setup_distributed()
@@ -78,7 +84,7 @@ def main():
     torch.backends.cudnn.benchmark = True
     if rank == 0:
         os.makedirs(args.dir_output, exist_ok=True)
-        wandb.init(project="adam-sgd-gap")
+        wandb.init(project="adam-sgd-gap", mode="disabled" if args.debug else "online")
         wandb.config.update(args)
 
     tr_loader, vl_loader, n_classes, steps_per_epoch = get_dataloaders(
@@ -90,8 +96,10 @@ def main():
     )
 
     model = vit_small_patch16_224(n_classes=n_classes).cuda()
-    model = DDP(model, device_ids=[local_rank], output_device=local_rank)
-    model = torch.compile(model) if args.compile else model
+    if world_size > 1:
+        model = DDP(model, device_ids=[local_rank], output_device=local_rank)
+    if args.compile:
+        model = torch.compile(model)
     criterion = nn.CrossEntropyLoss()
 
     total_steps = args.epochs * steps_per_epoch
@@ -109,16 +117,15 @@ def main():
     )
 
     best_acc = 0.0
+    global_step = 0
     for epoch in range(args.epochs):
-        t0 = time.time()
-
         # Train
         model.train()
         for step, (x, y) in enumerate(tr_loader):
             if step >= steps_per_epoch:
                 break
 
-            lr = scheduler[epoch * steps_per_epoch + step]
+            lr = scheduler[global_step]
             for p in optimizer.param_groups:
                 p["lr"] = lr
 
@@ -133,52 +140,53 @@ def main():
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
             optimizer.step()
+            global_step += 1
 
-            if rank == 0 and step % args.log_interval == 0:
-                print(f"ep {epoch} tr_loss {loss.item():.4f} lr {lr:.6f}")
+            if rank == 0 and global_step % args.log_interval == 0:
+                print(f"step {global_step} tr_loss {loss.item():.4f} lr {lr:.6f}")
                 wandb.log({"train/loss": loss.item(), "train/lr": lr})
 
-        # Validate
-        model.eval()
-        vl_loss, vl_correct1, vl_correct5, vl_n = 0, 0, 0, 0
-        with torch.no_grad():
-            for x, y in vl_loader:
-                x, y = x.cuda(non_blocking=True), y.cuda(non_blocking=True)
-                with autocast("cuda", dtype=torch.bfloat16):
-                    out = model(x)
-                vl_loss += criterion(out, y).item() * x.size(0)
-                top5 = out.topk(5, dim=1)[1]
-                vl_correct1 += top5[:, 0].eq(y).sum().item()
-                vl_correct5 += top5.eq(y.view(-1, 1)).sum().item()
-                vl_n += x.size(0)
-        metrics = torch.tensor([vl_loss, vl_correct1, vl_correct5, vl_n], device="cuda")
-        dist.all_reduce(metrics)
-        vl_loss, vl_acc1, vl_acc5 = (
-            metrics[0].item() / metrics[3].item(),
-            metrics[1].item() / metrics[3].item() * 100,
-            metrics[2].item() / metrics[3].item() * 100,
-        )
+            # Evaluate
+            if args.eval_interval > 0 and global_step % args.eval_interval == 0:
+                model.eval()
+                vl_loss, vl_correct1, vl_correct5, vl_n = 0, 0, 0, 0
+                with torch.no_grad():
+                    for x, y in vl_loader:
+                        x, y = x.cuda(non_blocking=True), y.cuda(non_blocking=True)
+                        with autocast("cuda", dtype=torch.bfloat16):
+                            out = model(x)
+                        vl_loss += criterion(out, y).item() * x.size(0)
+                        top5 = out.topk(5, dim=1)[1]
+                        vl_correct1 += top5[:, 0].eq(y).sum().item()
+                        vl_correct5 += top5.eq(y.view(-1, 1)).sum().item()
+                        vl_n += x.size(0)
+                metrics = [vl_loss, vl_correct1, vl_correct5, vl_n]
+                metrics = torch.tensor(metrics, device="cuda")
+                if world_size > 1:
+                    dist.all_reduce(metrics)
+                vl_loss, vl_acc1, vl_acc5 = (
+                    metrics[0].item() / metrics[3].item(),
+                    metrics[1].item() / metrics[3].item() * 100,
+                    metrics[2].item() / metrics[3].item() * 100,
+                )
+                if rank == 0:
+                    print(f"step {global_step} vl_acc1 {vl_acc1:.2f}")
+                    wandb.log(
+                        {"val/loss": vl_loss, "val/acc1": vl_acc1, "val/acc5": vl_acc5}
+                    )
+                    w = (
+                        model.module.state_dict()
+                        if world_size > 1
+                        else model.state_dict()
+                    )
+                    torch.save(w, os.path.join(args.dir_output, "last.pth"))
+                    if vl_acc1 > best_acc:
+                        best_acc = vl_acc1
+                        torch.save(w, os.path.join(args.dir_output, "best.pth"))
+                model.train()
 
-        # Logging and checkpointing
-        if rank == 0:
-            wandb.log(
-                {
-                    "val/loss": vl_loss,
-                    "val/acc1": vl_acc1,
-                    "val/acc5": vl_acc5,
-                    "epoch_time_min": (time.time() - t0) / 60,
-                    "norm_l2": torch.sqrt(
-                        sum(torch.sum(p**2) for p in model.parameters())
-                    ).item(),
-                }
-            )
-            weights = model.module.state_dict()
-            torch.save(weights, os.path.join(args.dir_output, "last.pth"))
-            if vl_acc1 > best_acc:
-                best_acc = vl_acc1
-                torch.save(weights, os.path.join(args.dir_output, "best.pth"))
-
-    dist.destroy_process_group()
+    if world_size > 1:
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":
