@@ -9,10 +9,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-def norm(x):
-    return F.rms_norm(x, (x.size(-1),))
-
-
 def posemb_sincos_2d(h, w, width, temperature=10_000.0):
     """https://github.com/google-research/big_vision/blob/main/big_vision/models/vit.py#L34"""
     y, x = np.mgrid[:h, :w]
@@ -48,6 +44,8 @@ class Attention(nn.Module):
         self.n_heads = n_heads
         self.d_head = dim // n_heads
         self.qkv = nn.Linear(dim, dim * 3, bias=False)
+        self.norm_q = nn.RMSNorm(self.d_head, eps=1e-6)
+        self.norm_k = nn.RMSNorm(self.d_head, eps=1e-6)
         self.proj = nn.Linear(dim, dim, bias=False)
 
     def forward(self, x):
@@ -55,6 +53,7 @@ class Attention(nn.Module):
         qkv = self.qkv(x).reshape(B, N, 3, self.n_heads, self.d_head)
         qkv = qkv.permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
+        q, k = self.norm_q(q), self.norm_k(k)
         x = F.scaled_dot_product_attention(q, k, v, dropout_p=0.0)
         x = x.transpose(1, 2).reshape(B, N, C)
         x = self.proj(x)
@@ -71,7 +70,7 @@ class MLP(nn.Module):
 
     def forward(self, x):
         x = self.fc1(x)
-        x = F.relu(x).square()
+        x = F.gelu(x)
         x = self.fc2(x)
         return x
 
@@ -79,12 +78,14 @@ class MLP(nn.Module):
 class TransformerBlock(nn.Module):
     def __init__(self, dim, n_heads, mlp_ratio=4.0):
         super().__init__()
+        self.norm1 = nn.RMSNorm(dim, eps=1e-6)
         self.attn = Attention(dim, n_heads=n_heads)
+        self.norm2 = nn.RMSNorm(dim, eps=1e-6)
         self.mlp = MLP(in_features=dim, hidden_features=int(dim * mlp_ratio))
 
     def forward(self, x):
-        x = x + self.attn(norm(x))
-        x = x + self.mlp(norm(x))
+        x = x + self.attn(self.norm1(x))
+        x = x + self.mlp(self.norm2(x))
         return x
 
 
@@ -111,13 +112,17 @@ class VisionTransformer(nn.Module):
             d_embed=d_embed,
         )
         grid_size = self.patch_embed.grid_size
-        pos_embed = posemb_sincos_2d(grid_size, grid_size, d_embed)
-        pos_embed = torch.from_numpy(pos_embed).float().unsqueeze(0)
-        self.register_buffer("pos_embed", pos_embed)
+        # pos_embed = posemb_sincos_2d(grid_size, grid_size, d_embed)
+        # pos_embed = torch.from_numpy(pos_embed).float().unsqueeze(0)
+        # self.register_buffer("pos_embed", pos_embed)
+        num_patches = grid_size**2
+        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, d_embed))
+        self.norm_embed = nn.RMSNorm(d_embed, eps=1e-6)
 
         self.blocks = nn.ModuleList(
             [TransformerBlock(d_embed, n_heads, mlp_ratio) for _ in range(n_layers)]
         )
+        self.norm = nn.RMSNorm(d_embed, eps=1e-6)
         self.head = nn.ModuleList(
             [
                 nn.Linear(d_embed, d_embed, bias=False),
@@ -140,9 +145,10 @@ class VisionTransformer(nn.Module):
     def forward(self, x):
         x = self.patch_embed(x)
         x = x + self.pos_embed
+        x = self.norm_embed(x)
         for block in self.blocks:
             x = block(x)
-        x = norm(x)
+        x = self.norm(x)
         x = x.mean(dim=1)
         for layer in self.head:
             x = layer(x)
