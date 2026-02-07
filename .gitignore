@@ -6,7 +6,6 @@ figures
 *.pkl
 *.npz
 *.npy
-*.sh
 *.jpg
 *.pt
 *.txt

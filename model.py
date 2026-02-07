@@ -3,9 +3,23 @@ Vision Transformer Small (ViT-S/16) for ImageNet-1K.
 https://arxiv.org/abs/2205.01580
 """
 
+import math
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+def posemb_sincos_2d(h, w, width, temperature=10_000.0):
+    """https://github.com/google-research/big_vision/blob/main/big_vision/models/vit.py#L34"""
+    y, x = np.mgrid[:h, :w]
+    assert width % 4 == 0, "Width must be mult of 4 for sincos posemb"
+    omega = np.arange(width // 4) / (width // 4 - 1)
+    omega = 1.0 / (temperature**omega)
+    y = np.einsum("m,d->md", y.flatten().astype(np.float32), omega)
+    x = np.einsum("m,d->md", x.flatten().astype(np.float32), omega)
+    return np.concatenate([np.sin(x), np.cos(x), np.sin(y), np.cos(y)], axis=1)
 
 
 class PatchEmbed(nn.Module):
@@ -53,15 +67,14 @@ class MLP(nn.Module):
         super().__init__()
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
-        hidden_features = int(hidden_features * 2 / 3)
-        hidden_features = 256 * ((hidden_features + 255) // 256)  # multiple of 256
-        self.hidden_features = hidden_features
-        self.fc1 = nn.Linear(in_features, 2 * hidden_features, bias=False)
+        self.fc1 = nn.Linear(in_features, hidden_features, bias=False)
         self.fc2 = nn.Linear(hidden_features, out_features, bias=False)
 
     def forward(self, x):
-        x, z = self.fc1(x).split(self.hidden_features, dim=-1)
-        return self.fc2(F.silu(x) * z)
+        x = self.fc1(x)
+        x = F.relu(x).square()
+        x = self.fc2(x)
+        return x
 
 
 class TransformerBlock(nn.Module):
@@ -101,32 +114,32 @@ class VisionTransformer(nn.Module):
             d_embed=d_embed,
         )
         grid_size = self.patch_embed.grid_size
-        num_patches = grid_size**2
-        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, d_embed))
+        pos_embed = posemb_sincos_2d(grid_size, grid_size, d_embed)
+        pos_embed = torch.from_numpy(pos_embed).float().unsqueeze(0)
+        self.register_buffer("pos_embed", pos_embed)
+        # num_patches = grid_size**2
+        # self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, d_embed))
         self.norm_embed = nn.RMSNorm(d_embed, eps=1e-6)
 
         self.blocks = nn.ModuleList(
             [TransformerBlock(d_embed, n_heads, mlp_ratio) for _ in range(n_layers)]
         )
         self.norm = nn.RMSNorm(d_embed, eps=1e-6)
-        self.head = nn.ModuleList(
-            [
-                nn.Linear(d_embed, d_embed, bias=False),
-                nn.Tanh(),
-                nn.Linear(d_embed, n_classes, bias=False),
-            ]
-        )
+        self.head = nn.Linear(d_embed, n_classes, bias=False)
         self._init_weights()
 
     def _init_weights(self):
         w = self.patch_embed.proj.weight.data
         torch.nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
+        scale = 1.0 / math.sqrt(2 * len(self.blocks))
         for block in self.blocks:
             nn.init.xavier_uniform_(block.attn.qkv.weight)
             nn.init.xavier_uniform_(block.attn.proj.weight)
+            block.attn.proj.weight.data *= scale
             nn.init.xavier_uniform_(block.mlp.fc1.weight)
             nn.init.xavier_uniform_(block.mlp.fc2.weight)
-        nn.init.zeros_(self.head[2].weight)
+            block.mlp.fc2.weight.data *= scale
+        nn.init.zeros_(self.head.weight)
 
     def forward(self, x):
         x = self.patch_embed(x)
@@ -136,8 +149,7 @@ class VisionTransformer(nn.Module):
             x = block(x)
         x = self.norm(x)
         x = x.mean(dim=1)
-        for layer in self.head:
-            x = layer(x)
+        x = self.head(x)
         return x
 
 
