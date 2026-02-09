@@ -153,7 +153,7 @@ class VisionTransformer(nn.Module):
         return x
 
 
-def vit_small_patch16_224(d_embed=384, n_layers=12, n_heads=6, n_classes=1000):
+def vit_small_patch16_224(d_embed=384, n_layers=6, n_heads=6, n_classes=1000):
     return VisionTransformer(
         img_size=224,
         patch_size=16,

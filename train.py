@@ -74,6 +74,9 @@ def main():
     parser.add_argument("--n_workers", type=int, default=8)
     parser.add_argument("--log_interval", type=int, default=100)
     parser.add_argument("--eval_interval", type=int, default=1000)
+    parser.add_argument("--d_embed", type=int, default=384)
+    parser.add_argument("--n_layers", type=int, default=6)
+    parser.add_argument("--n_heads", type=int, default=6)
     parser.add_argument("--compile", action="store_true")
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
@@ -97,7 +100,12 @@ def main():
         aug=args.aug,
     )
 
-    model = vit_small_patch16_224(n_classes=n_classes).cuda()
+    model = vit_small_patch16_224(
+        d_embed=args.d_embed,
+        n_layers=args.n_layers,
+        n_heads=args.n_heads,
+        n_classes=n_classes,
+    ).cuda()
     if world_size > 1:
         model = DDP(model, device_ids=[local_rank], output_device=local_rank)
     if args.compile:
