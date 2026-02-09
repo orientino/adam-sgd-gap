@@ -68,6 +68,7 @@ def main():
     parser.add_argument("--warm_ratio", type=float, default=0.1)
     parser.add_argument("--mixup_p", type=float, default=0.2)
     parser.add_argument("--grad_clip", type=float, default=1.0)
+    parser.add_argument("--accum_steps", type=int, default=1)
     parser.add_argument("--dir_output", type=str, required=True)
     parser.add_argument("--dir_data", type=str, required=True)
     parser.add_argument("--n_workers", type=int, default=8)
@@ -86,6 +87,7 @@ def main():
         os.makedirs(args.dir_output, exist_ok=True)
         wandb.init(project="adam-sgd-gap", mode="disabled" if args.debug else "online")
         wandb.config.update(args)
+        wandb.config.update({"bs": args.bs * args.accum_steps}, allow_val_change=True)
 
     tr_loader, vl_loader, n_classes, steps_per_epoch = get_dataloaders(
         dataset=args.data,
@@ -133,18 +135,22 @@ def main():
             x, y_soft = mixup(x, y, n_classes, p=args.mixup_p)
             with autocast("cuda", dtype=torch.bfloat16):
                 logits = model(x)
-                loss = -torch.sum(
-                    y_soft * torch.log_softmax(logits, dim=1), dim=1
-                ).mean()
-            optimizer.zero_grad()
+                loss = (
+                    -torch.sum(y_soft * torch.log_softmax(logits, dim=1), dim=1).mean()
+                    / args.accum_steps
+                )
             loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
-            optimizer.step()
-            global_step += 1
+
+            if (step + 1) % args.accum_steps == 0:
+                nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+                optimizer.step()
+                optimizer.zero_grad()
+                global_step += 1
 
             if rank == 0 and global_step % args.log_interval == 0:
-                print(f"step {global_step} tr_loss {loss.item():.4f} lr {lr:.6f}")
-                wandb.log({"train/loss": loss.item(), "train/lr": lr})
+                tr_loss = loss.item() * args.accum_steps
+                print(f"step {global_step} tr_loss {tr_loss:.4f} lr {lr:.6f}")
+                wandb.log({"train/loss": tr_loss, "train/lr": lr})
 
             # Evaluate
             if args.eval_interval > 0 and global_step % args.eval_interval == 0:
