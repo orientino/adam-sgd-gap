@@ -112,7 +112,7 @@ def main():
         model = torch.compile(model)
     criterion = nn.CrossEntropyLoss()
 
-    total_steps = args.epochs * steps_per_epoch
+    total_steps = args.epochs * steps_per_epoch // args.accum_steps
     if args.opt == "sgd":
         optimizer = SGD(model.parameters(), lr=args.lr, momentum=args.mom)
     elif args.opt == "adam":
