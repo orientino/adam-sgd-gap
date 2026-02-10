@@ -97,10 +97,10 @@ class VisionTransformer(nn.Module):
         img_size=224,
         patch_size=16,
         in_chans=3,
-        n_classes=1000,
-        d_embed=384,
         n_layers=12,
         n_heads=6,
+        d_embed=384,
+        n_classes=1000,
         mlp_ratio=4.0,
     ):
         super().__init__()
@@ -117,8 +117,6 @@ class VisionTransformer(nn.Module):
         pos_embed = posemb_sincos_2d(grid_size, grid_size, d_embed)
         pos_embed = torch.from_numpy(pos_embed).float().unsqueeze(0)
         self.register_buffer("pos_embed", pos_embed)
-        # num_patches = grid_size**2
-        # self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, d_embed))
         self.norm_embed = nn.RMSNorm(d_embed, eps=1e-6)
 
         self.blocks = nn.ModuleList(
@@ -153,15 +151,15 @@ class VisionTransformer(nn.Module):
         return x
 
 
-def vit_small_patch16_224(d_embed=384, n_layers=6, n_heads=6, n_classes=1000):
+def vit_small_patch16_224(n_layers=6, n_heads=6, d_embed=384, n_classes=1000):
     return VisionTransformer(
         img_size=224,
         patch_size=16,
         in_chans=3,
+        n_layers=n_layers,
+        n_heads=n_heads,
         d_embed=d_embed,
         n_classes=n_classes,
-        n_heads=n_heads,
-        n_layers=n_layers,
         mlp_ratio=4.0,
     )
 

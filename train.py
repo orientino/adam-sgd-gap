@@ -69,14 +69,14 @@ def main():
     parser.add_argument("--mixup_p", type=float, default=0.2)
     parser.add_argument("--grad_clip", type=float, default=1.0)
     parser.add_argument("--accum_steps", type=int, default=1)
+    parser.add_argument("--n_layers", type=int, default=6)
+    parser.add_argument("--n_heads", type=int, default=6)
+    parser.add_argument("--d_embed", type=int, default=384)
     parser.add_argument("--dir_output", type=str, required=True)
     parser.add_argument("--dir_data", type=str, required=True)
     parser.add_argument("--n_workers", type=int, default=8)
     parser.add_argument("--log_interval", type=int, default=100)
     parser.add_argument("--eval_interval", type=int, default=1000)
-    parser.add_argument("--d_embed", type=int, default=384)
-    parser.add_argument("--n_layers", type=int, default=6)
-    parser.add_argument("--n_heads", type=int, default=6)
     parser.add_argument("--compile", action="store_true")
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
@@ -101,9 +101,9 @@ def main():
     )
 
     model = vit_small_patch16_224(
-        d_embed=args.d_embed,
         n_layers=args.n_layers,
         n_heads=args.n_heads,
+        d_embed=args.d_embed,
         n_classes=n_classes,
     ).cuda()
     if world_size > 1:
