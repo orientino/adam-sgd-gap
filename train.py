@@ -112,6 +112,9 @@ def main():
         model = torch.compile(model)
     criterion = nn.CrossEntropyLoss()
 
+    # in underparametrized setting, drop the last few number of steps
+    # so that they are not accumulated together with the next epoch.
+    steps_per_epoch = (steps_per_epoch // args.accum_steps) * args.accum_steps
     total_steps = args.epochs * steps_per_epoch // args.accum_steps
     if args.opt == "sgd":
         optimizer = SGD(model.parameters(), lr=args.lr, momentum=args.mom)
