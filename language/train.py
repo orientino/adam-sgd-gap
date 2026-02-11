@@ -35,7 +35,7 @@ def setup_distributed():
 def cosine_scheduler(base_lr, final_lr, total_steps, warm_steps=0):
     warm_schedule = np.array([])
     if warm_steps > 0:
-        warm_schedule = np.linspace(0, base_lr, warm_steps)
+        warm_schedule = np.linspace(0, base_lr, warm_steps + 1)[1:]
     iters = np.arange(total_steps - warm_steps)
     schedule = final_lr + 0.5 * (base_lr - final_lr) * (
         1 + np.cos(np.pi * iters / len(iters))
@@ -118,6 +118,7 @@ def main():
         warm_steps=int(args.warm_ratio * total_steps),
     )
 
+    tr_loss = 0.0
     best_loss = float("inf")
     global_step = 0
     for epoch in range(args.epochs):
@@ -127,10 +128,6 @@ def main():
             if step >= steps_per_epoch:
                 break
 
-            lr = scheduler[global_step]
-            for p in optimizer.param_groups:
-                p["lr"] = lr
-
             x, y = x.cuda(non_blocking=True), y.cuda(non_blocking=True)
             with autocast("cuda", dtype=torch.bfloat16):
                 logits = model(x)
@@ -139,49 +136,55 @@ def main():
                     / args.accum_steps
                 )
             loss.backward()
+            tr_loss += loss.item()
 
             if (step + 1) % args.accum_steps == 0:
+                lr = scheduler[global_step]
+                for p in optimizer.param_groups:
+                    p["lr"] = lr
                 nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
                 optimizer.step()
                 optimizer.zero_grad()
                 global_step += 1
 
-            if rank == 0 and global_step % args.log_interval == 0:
-                tr_loss = loss.item() * args.accum_steps
-                print(f"step {global_step} tr_loss {tr_loss:.4f} lr {lr:.6f}")
-                wandb.log({"train/loss": tr_loss, "train/lr": lr})
+                # Log train metrics
+                if rank == 0 and global_step % args.log_interval == 0:
+                    print(f"step {global_step} tr_loss {tr_loss:.4f} lr {lr:.6f}")
+                    wandb.log({"train/loss": tr_loss, "train/lr": lr})
+                tr_loss = 0.0
 
-            # Evaluate
-            if args.eval_interval > 0 and global_step % args.eval_interval == 0:
-                model.eval()
-                vl_loss, vl_n = 0.0, 0
-                with torch.no_grad():
-                    for vx, vy in vl_loader:
-                        vx, vy = vx.cuda(non_blocking=True), vy.cuda(non_blocking=True)
-                        with autocast("cuda", dtype=torch.bfloat16):
-                            out = model(vx)
-                        vl_loss += criterion(
-                            out.view(-1, out.size(-1)), vy.view(-1)
-                        ).item() * vx.size(0)
-                        vl_n += vx.size(0)
-                metrics = torch.tensor([vl_loss, vl_n], device="cuda")
-                if world_size > 1:
-                    dist.all_reduce(metrics)
-                vl_loss = metrics[0].item() / metrics[1].item()
-                vl_ppl = math.exp(min(vl_loss, 20))
-                if rank == 0:
-                    print(f"step {global_step} vl_loss {vl_loss:.4f}")
-                    wandb.log({"val/loss": vl_loss, "val/ppl": vl_ppl})
-                    w = (
-                        model.module.state_dict()
-                        if world_size > 1
-                        else model.state_dict()
-                    )
-                    torch.save(w, os.path.join(args.dir_output, "last.pth"))
-                    if vl_loss < best_loss:
-                        best_loss = vl_loss
-                        torch.save(w, os.path.join(args.dir_output, "best.pth"))
-                model.train()
+                # Log eval metrics
+                if args.eval_interval > 0 and global_step % args.eval_interval == 0:
+                    model.eval()
+                    vl_loss, vl_n = 0.0, 0
+                    with torch.no_grad():
+                        for x, y in vl_loader:
+                            x = x.cuda(non_blocking=True)
+                            y = y.cuda(non_blocking=True)
+                            with autocast("cuda", dtype=torch.bfloat16):
+                                out = model(x)
+                            vl_loss += criterion(
+                                out.view(-1, out.size(-1)), y.view(-1)
+                            ).item() * x.size(0)
+                            vl_n += x.size(0)
+                    metrics = torch.tensor([vl_loss, vl_n], device="cuda")
+                    if world_size > 1:
+                        dist.all_reduce(metrics)
+                    vl_loss = metrics[0].item() / metrics[1].item()
+                    vl_ppl = math.exp(min(vl_loss, 20))
+                    if rank == 0:
+                        print(f"step {global_step} vl_loss {vl_loss:.4f}")
+                        wandb.log({"val/loss": vl_loss, "val/ppl": vl_ppl})
+                        w = (
+                            model.module.state_dict()
+                            if world_size > 1
+                            else model.state_dict()
+                        )
+                        torch.save(w, os.path.join(args.dir_output, "last.pth"))
+                        if vl_loss < best_loss:
+                            best_loss = vl_loss
+                            torch.save(w, os.path.join(args.dir_output, "best.pth"))
+                    model.train()
 
     if world_size > 1:
         dist.destroy_process_group()
