@@ -1,7 +1,7 @@
 wandb
-results
 slurm
-figures
+_results
+_figures
 *.json
 *.pkl
 *.npz
