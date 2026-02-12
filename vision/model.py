@@ -165,7 +165,7 @@ def vit_small_patch16_224(n_layers=6, n_heads=6, d_embed=384, n_classes=1000):
 
 
 if __name__ == "__main__":
-    model = vit_small_patch16_224(n_layers=6)
+    model = vit_small_patch16_224(n_layers=6, n_classes=10)
     x = torch.randn(2, 3, 224, 224)
     y = model(x)
     print(f"Input shape: {x.shape}")
