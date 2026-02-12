@@ -88,6 +88,8 @@ def main():
         batch_size=args.bs,
         n_workers=args.n_workers,
     )
+    print(f"tr ds size: {len(tr_loader.dataset):,} samples")
+    print(f"vl ds size: {len(vl_loader.dataset):,} samples")
 
     model = gpt_small(
         seq_len=args.seq_len,
