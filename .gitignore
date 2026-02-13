@@ -1,6 +1,5 @@
 wandb
 slurm
-_results
 _figures
 *.json
 *.pkl
@@ -9,7 +8,6 @@ _figures
 *.jpg
 *.pt
 *.txt
-*.csv
 *.out
 *.json
 .DS_Store
