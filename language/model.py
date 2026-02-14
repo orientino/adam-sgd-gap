@@ -50,9 +50,9 @@ class Attention(nn.Module):
         qkv = self.qkv(x).reshape(B, T, 3, self.n_heads, self.d_head)
         qkv = qkv.permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
+        q, k = self.norm_q(q), self.norm_k(k)
         q = apply_rotary_emb(q, freqs_cis)
         k = apply_rotary_emb(k, freqs_cis)
-        q, k = self.norm_q(q), self.norm_k(k)
         x = F.scaled_dot_product_attention(q, k, v, is_causal=True)
         x = x.transpose(1, 2).reshape(B, T, C)
         x = self.proj(x)
