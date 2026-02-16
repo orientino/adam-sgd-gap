@@ -50,6 +50,7 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--bs", type=int, default=256)
     parser.add_argument("--lr", type=float, default=0.001)
+    parser.add_argument("--wd", type=float, default=0.0001)
     parser.add_argument("--mom", type=float, default=0.9)
     parser.add_argument("--opt", type=str, default="adam")
     parser.add_argument("--data", type=str, default="tinystories")
@@ -149,10 +150,27 @@ def main():
                 optimizer.zero_grad()
                 global_step += 1
 
+                # decouple weight decay from learning rate
+                # pytorch adamw: p -= lr * wd * p
+                # true decouple: p -= wd * p
+                with torch.no_grad():
+                    mult = lr / args.lr
+                    for n, p in model.named_parameters():
+                        p.data.mul_(1 - args.wd * mult)
+
                 # Log train metrics
                 if rank == 0 and global_step % args.log_interval == 0:
                     print(f"step {global_step} tr_loss {tr_loss:.4f} lr {lr:.6f}")
-                    wandb.log({"train/loss": tr_loss, "train/lr": lr})
+                    wandb.log(
+                        {
+                            "train/loss": tr_loss,
+                            "train/lr": lr,
+                            "train/wd": args.wd * mult,
+                            "train/w_norm": torch.sqrt(
+                                sum(p.data.norm() ** 2 for p in model.parameters())
+                            ).item(),
+                        }
+                    )
                 tr_loss = 0.0
 
                 # Log eval metrics
