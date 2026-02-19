@@ -60,7 +60,7 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--bs", type=int, default=256)
     parser.add_argument("--lr", type=float, default=0.001)
-    parser.add_argument("--wd", type=float, default=0.0001)
+    parser.add_argument("--wd", type=float, default=0.0)
     parser.add_argument("--mom", type=float, default=0.9)
     parser.add_argument("--aug", action="store_true")
     parser.add_argument("--opt", type=str, default="adam")

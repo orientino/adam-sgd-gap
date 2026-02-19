@@ -24,6 +24,8 @@ def get_dataloaders(dataset, **kwargs):
         return get_c10_dataloaders(**kwargs)
     elif dataset == "c5m":
         return get_c5m_dataloaders(**kwargs)
+    elif dataset == "c5m_imbalanced":
+        return get_c5m_imbalanced_dataloaders(**kwargs)
     else:
         raise ValueError(f"Unknown dataset: {dataset}")
 
@@ -107,6 +109,50 @@ def get_c5m_dataloaders(
         num_workers=n_workers,
     )
     steps_per_epoch = C5M_SAMPLES // batch_size
+    return tr_loader, vl_loader, 10, steps_per_epoch
+
+
+def get_c5m_imbalanced_dataloaders(
+    dir_data,
+    batch_size=256,
+    n_workers=8,
+    aug=True,
+):
+    data = np.load(os.path.join(dir_data, "cifar-5m-imbalanced", "c5m_imbalanced.npz"))
+    images, labels = data["X"], data["Y"]
+    n_samples = len(labels)
+
+    transform = [
+        T.ToPILImage(),
+        T.RandomHorizontalFlip(),
+        T.RandomCrop(32, padding=4),
+        T.Resize(224),
+        T.ToTensor(),
+        T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
+    ]
+    transform_vl = T.Compose(
+        [
+            T.Resize(224),
+            T.ToTensor(),
+            T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
+        ]
+    )
+    transform_tr = T.Compose(transform if aug else [transform[0]] + transform[3:])
+    tr_dataset = CIFAR5M(images, labels, transform=transform_tr)
+    vl_dataset = CIFAR10(dir_data, train=False, transform=transform_vl, download=True)
+    tr_loader = DataLoader(
+        tr_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=n_workers,
+    )
+    vl_loader = DataLoader(
+        vl_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=n_workers,
+    )
+    steps_per_epoch = n_samples // batch_size
     return tr_loader, vl_loader, 10, steps_per_epoch
 
 
