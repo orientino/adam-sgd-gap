@@ -2,21 +2,19 @@ from pathlib import Path
 
 import numpy as np
 
-SEED = 42
 DIR_DATA = "/project/home/p200535/data"
-C5M_PARTS = 6
 CLASS_COUNTS = np.array([500_000 // (i + 1) for i in range(10)], dtype=np.int64)
 
 
 def load_c5m_parts(dir_data):
     base = Path(dir_data) / "cifar-5m"
-    for i in range(C5M_PARTS):
+    for i in range(6):
         with np.load(base / f"part{i}.npz") as data:
             yield data["X"], data["Y"]
 
 
-def create_c5m_imbalanced(dir_data, out_name="c5m_imbalanced.npz", seed=SEED):
-    rng = np.random.default_rng(seed)
+def create_c5m_imbalanced(dir_data):
+    rng = np.random.default_rng(42)
 
     class_totals = np.zeros(10, dtype=np.int64)
     for _, y in load_c5m_parts(dir_data):
@@ -71,17 +69,12 @@ def create_c5m_imbalanced(dir_data, out_name="c5m_imbalanced.npz", seed=SEED):
         write += n
         print(f"Processed part {part_idx}: selected {n}")
 
-    if write != total_target:
-        raise RuntimeError(f"selected {write} samples, expected {total_target}")
-    if out_x is None:
-        raise RuntimeError("no samples were selected")
-
     out_x.flush()
     out_y.flush()
     counts = np.bincount(out_y, minlength=10)
     x_shape = out_x.shape
 
-    out_path = out_dir / out_name
+    out_path = out_dir / "c5m_imbalanced.npz"
     np.savez(out_path, X=np.load(x_tmp, mmap_mode="r"), Y=np.load(y_tmp, mmap_mode="r"))
 
     x_tmp.unlink(missing_ok=True)
