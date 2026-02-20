@@ -1,14 +1,10 @@
-"""
-Data loading for ImageNet-1k, CIFAR-10, and CIFAR-5m training.
-"""
-
 import os
+from io import BytesIO
 
 import numpy as np
-import torch.distributed as dist
 import torchvision.transforms as T
 import webdataset as wds
-from timm.data.auto_augment import rand_augment_transform
+from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from torchvision.datasets import CIFAR10
 
@@ -18,14 +14,14 @@ C5M_SAMPLES = 5_000_000
 
 
 def get_dataloaders(dataset, **kwargs):
-    if dataset == "i1k":
-        return get_i1k_dataloaders(**kwargs)
-    elif dataset == "c10":
+    if dataset == "c10":
         return get_c10_dataloaders(**kwargs)
     elif dataset == "c5m":
         return get_c5m_dataloaders(**kwargs)
     elif dataset == "c5m_imbalanced":
         return get_c5m_imbalanced_dataloaders(**kwargs)
+    elif dataset == "i1k_imbalanced":
+        return get_i1k_imbalanced_dataloaders(**kwargs)
     else:
         raise ValueError(f"Unknown dataset: {dataset}")
 
@@ -120,8 +116,6 @@ def get_c5m_imbalanced_dataloaders(
 ):
     data = np.load(os.path.join(dir_data, "cifar-5m-imbalanced", "c5m_imbalanced.npz"))
     images, labels = data["X"], data["Y"]
-    n_samples = len(labels)
-
     transform = [
         T.ToPILImage(),
         T.RandomHorizontalFlip(),
@@ -152,8 +146,65 @@ def get_c5m_imbalanced_dataloaders(
         shuffle=False,
         num_workers=n_workers,
     )
-    steps_per_epoch = n_samples // batch_size
+    steps_per_epoch = len(labels) // batch_size
     return tr_loader, vl_loader, 10, steps_per_epoch
+
+
+def get_i1k_imbalanced_dataloaders(
+    dir_data,
+    batch_size=256,
+    n_workers=8,
+    aug=True,
+):
+    data = np.load(
+        os.path.join(dir_data, "imagenet1k-imbalanced", "i1k_imbalanced.npz"),
+        mmap_mode="r",
+        allow_pickle=True,
+    )
+    images, labels = data["X"], data["Y"]
+    transform = [
+        T.RandomResizedCrop(224, scale=(0.05, 1.0)),
+        T.RandomHorizontalFlip(),
+        T.ToTensor(),
+        T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
+    ]
+    transform_vl = T.Compose(
+        [
+            T.Resize(256),
+            T.CenterCrop(224),
+            T.ToTensor(),
+            T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
+        ]
+    )
+    transform_tr = T.Compose(transform) if aug else transform_vl
+    tr_dataset = I1KImbalanced(images, labels, transform=transform_tr)
+    vl_dataset = (
+        wds.WebDataset(
+            os.path.join(dir_data, "imagenet1k", "imagenet1k-validation-{00..63}.tar"),
+            shardshuffle=False,
+            nodesplitter=wds.split_by_node,
+        )
+        .decode("pil")
+        .map(lambda x: (transform_vl(x["jpg"]), int(x["cls"])))
+        .with_length(50_000)
+    )
+    tr_loader = DataLoader(
+        tr_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=n_workers,
+        persistent_workers=True,
+        pin_memory=True,
+    )
+    vl_loader = DataLoader(
+        vl_dataset,
+        batch_size=batch_size,
+        num_workers=n_workers,
+        persistent_workers=True,
+        pin_memory=True,
+    )
+    steps_per_epoch = len(labels) // batch_size
+    return tr_loader, vl_loader, 1000, steps_per_epoch
 
 
 class CIFAR5M(Dataset):
@@ -172,69 +223,20 @@ class CIFAR5M(Dataset):
         return img, int(self.labels[idx])
 
 
-def get_i1k_dataloaders(
-    dir_data,
-    batch_size=256,  # batch size per GPU
-    n_workers=8,
-    aug=True,
-):
-    world_size = dist.get_world_size() if dist.is_initialized() else 1
-    steps_per_epoch = I1K_TRAIN_SAMPLES // (batch_size * world_size)
+class I1KImbalanced(Dataset):
+    def __init__(self, images, labels, transform=None):
+        self.images = images
+        self.labels = labels
+        self.transform = transform
 
-    transform = [
-        T.RandomResizedCrop(224, scale=(0.05, 1.0)),
-        T.RandomHorizontalFlip(),
-        rand_augment_transform(
-            config_str="rand-m10-n2",
-            hparams={"img_mean": (128, 128, 128)},
-        ),
-        T.ToTensor(),
-        T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
-    ]
-    transform_vl = T.Compose(
-        [
-            T.Resize(256),
-            T.CenterCrop(224),
-            T.ToTensor(),
-            T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
-        ]
-    )
-    transform_tr = T.Compose(transform) if aug else transform_vl
-    tr_dataset = (
-        wds.WebDataset(
-            os.path.join(dir_data, "imagenet1k-train-{0000..1023}.tar"),
-            shardshuffle=True,
-            nodesplitter=wds.split_by_node,
-        )
-        .shuffle(250_000)
-        .decode("pil")
-        .map(lambda x: (transform_tr(x["jpg"]), int(x["cls"])))
-    )
-    vl_dataset = (
-        wds.WebDataset(
-            os.path.join(dir_data, "imagenet1k-validation-{00..63}.tar"),
-            shardshuffle=False,
-            nodesplitter=wds.split_by_node,
-        )
-        .decode("pil")
-        .map(lambda x: (transform_vl(x["jpg"]), int(x["cls"])))
-    )
-    tr_loader = DataLoader(
-        tr_dataset,
-        batch_size=batch_size,
-        num_workers=n_workers,
-        persistent_workers=True,
-        pin_memory=True,
-    )
-    vl_loader = DataLoader(
-        vl_dataset,
-        batch_size=batch_size,
-        num_workers=n_workers,
-        persistent_workers=True,
-        pin_memory=True,
-    )
+    def __len__(self):
+        return len(self.labels)
 
-    return tr_loader, vl_loader, 1000, steps_per_epoch
+    def __getitem__(self, idx):
+        img = Image.open(BytesIO(self.images[idx])).convert("RGB")
+        if self.transform:
+            img = self.transform(img)
+        return img, int(self.labels[idx])
 
 
 if __name__ == "__main__":
@@ -244,7 +246,11 @@ if __name__ == "__main__":
     parser.add_argument("--dir_data", type=str, required=True)
     args = parser.parse_args()
 
-    tr_loader, vl_loader, _, _ = get_dataloaders("c10", dir_data=args.dir_data)
-    print(f"CIFAR-10 train: {len(tr_loader.dataset)}, val: {len(vl_loader.dataset)}")
-    tr_loader, vl_loader, _, _ = get_dataloaders("c5m", dir_data=args.dir_data)
-    print(f"CIFAR-5m train: {len(tr_loader.dataset)}, val: {len(vl_loader.dataset)}")
+    tr_dl, vl_dl, _, _ = get_dataloaders("c10", dir_data=args.dir_data)
+    print(f"c10 tr: {len(tr_dl.dataset)}, vl: {len(vl_dl.dataset)}")
+    tr_dl, vl_dl, _, _ = get_dataloaders("c5m", dir_data=args.dir_data)
+    print(f"c5m tr: {len(tr_dl.dataset)}, vl: {len(vl_dl.dataset)}")
+    tr_dl, vl_dl, _, _ = get_dataloaders("c5m_imbalanced", dir_data=args.dir_data)
+    print(f"c5m_imbalanced tr: {len(tr_dl.dataset)}, vl: {len(vl_dl.dataset)}")
+    tr_dl, vl_dl, _, _ = get_dataloaders("i1k_imbalanced", dir_data=args.dir_data)
+    print(f"i1k_imbalanced tr: {len(tr_dl.dataset)}, vl: {len(vl_dl.dataset)}")
