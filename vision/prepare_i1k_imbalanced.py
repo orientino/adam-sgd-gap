@@ -25,12 +25,18 @@ def create_i1k_imbalanced(dir_data):
     class_totals = np.zeros(N_CLASSES, dtype=np.int64)
     for _, y in tqdm(load_i1k_parts(dir_data), total=1281167):
         class_totals[y] += 1
+    print("Class totals:", class_totals.sum())
+    print("Class frequency:", np.sort(class_totals)[::-1])
 
-    sorted_classes = np.argsort(-class_totals)
+    # assign to the most frequent class the largest target count, and so on.
+    sorted_classes = np.argsort(-class_totals)  # sort classes by frequency (descending)
     target_counts = np.zeros(N_CLASSES, dtype=np.int64)
-    target_counts[sorted_classes] = CLASS_COUNTS
-    target_counts = np.minimum(target_counts, class_totals)
-    sampled_positions = [
+    target_counts[sorted_classes] = CLASS_COUNTS  # assign target counts to classes
+    target_counts = np.minimum(target_counts, class_totals)  # clip to available samples
+
+    # for each class `c`, sample `target_counts[c]` indexes for the final dataset.
+    # the sorting is efficient so later we can pick them in one pass through the data.
+    sampled_idxs_per_class = [
         np.sort(rng.choice(class_totals[c], size=target_counts[c], replace=False))
         for c in range(N_CLASSES)
     ]
@@ -42,7 +48,9 @@ def create_i1k_imbalanced(dir_data):
     out_x = np.empty(total_target, dtype=object)
     out_y = np.empty(total_target, dtype=np.int64)
 
+    # keep count of how many samples per class have been seen
     seen_per_class = np.zeros(N_CLASSES, dtype=np.int64)
+    # keep pointer to the next index to sample for each class
     ptr_per_class = np.zeros(N_CLASSES, dtype=np.int64)
     write = 0
 
@@ -50,9 +58,12 @@ def create_i1k_imbalanced(dir_data):
         pos = seen_per_class[y]
         seen_per_class[y] += 1
 
+        # the current sample is selected if
+        # 1. there are not yet enough samples for this class, and
+        # 2. the current position matches the next index to sample for this class
         ptr = ptr_per_class[y]
-        picked = sampled_positions[y]
-        if ptr < len(picked) and picked[ptr] == pos:
+        sampled_idxs = sampled_idxs_per_class[y]
+        if ptr < len(sampled_idxs) and sampled_idxs[ptr] == pos:
             out_x[write] = x
             out_y[write] = y
             ptr_per_class[y] += 1
