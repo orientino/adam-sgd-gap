@@ -100,8 +100,8 @@ def main():
         n_workers=args.n_workers,
         aug=args.aug,
     )
-    print(f"tr ds size: {len(tr_loader.dataset) // 1e6:.0f}M images")
-    print(f"vl ds size: {len(vl_loader.dataset) // 1e6:.0f}M images")
+    print(f"tr ds size: {len(tr_loader.dataset):,} images")
+    print(f"vl ds size: {len(vl_loader.dataset):,} images")
 
     model = vit_small_patch16_224(
         n_layers=args.n_layers,
