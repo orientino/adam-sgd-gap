@@ -64,7 +64,7 @@ def main():
     parser.add_argument("--mom", type=float, default=0.9)
     parser.add_argument("--aug", action="store_true")
     parser.add_argument("--opt", type=str, default="adam")
-    parser.add_argument("--data", type=str, default="i1k")
+    parser.add_argument("--data", type=str, default="c10")
     parser.add_argument("--epochs", type=int, default=90)
     parser.add_argument("--warm_ratio", type=float, default=0.1)
     parser.add_argument("--mixup_p", type=float, default=0.2)
@@ -143,13 +143,15 @@ def main():
                 break
 
             x, y = x.cuda(non_blocking=True), y.cuda(non_blocking=True)
-            x, y_soft = mixup(x, y, n_classes, p=args.mixup_p)
             with autocast("cuda", dtype=torch.bfloat16):
-                logits = model(x)
-                loss = (
-                    -torch.sum(y_soft * torch.log_softmax(logits, dim=1), dim=1).mean()
-                    / args.accum_steps
-                )
+                if args.mixup_p > 0:
+                    x, y_soft = mixup(x, y, n_classes, p=args.mixup_p)
+                    logits = model(x)
+                    loss = -torch.sum(y_soft * torch.log_softmax(logits, dim=1), dim=1).mean()  # fmt: skip
+                else:
+                    logits = model(x)
+                    loss = criterion(logits, y)
+                loss = loss / args.accum_steps
             loss.backward()
             tr_loss += loss.item()
 

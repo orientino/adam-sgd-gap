@@ -23,7 +23,7 @@ def create_i1k_imbalanced(dir_data):
     rng = np.random.default_rng(42)
 
     class_totals = np.zeros(N_CLASSES, dtype=np.int64)
-    for _, y in tqdm(load_i1k_parts(dir_data), total=1281167):
+    for _, y in tqdm(load_i1k_parts(dir_data)):
         class_totals[y] += 1
     print("Class totals:", class_totals.sum())
     print("Class frequency:", np.sort(class_totals)[::-1])
@@ -54,7 +54,7 @@ def create_i1k_imbalanced(dir_data):
     ptr_per_class = np.zeros(N_CLASSES, dtype=np.int64)
     write = 0
 
-    for x, y in tqdm(load_i1k_parts(dir_data), total=total_target):
+    for x, y in tqdm(load_i1k_parts(dir_data)):
         pos = seen_per_class[y]
         seen_per_class[y] += 1
 

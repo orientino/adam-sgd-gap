@@ -38,6 +38,7 @@ def apply_rotary_emb(x, freqs_cis):
 class Attention(nn.Module):
     def __init__(self, dim, n_heads=8):
         super().__init__()
+        assert dim % n_heads == 0
         self.n_heads = n_heads
         self.d_head = dim // n_heads
         self.qkv = nn.Linear(dim, dim * 3, bias=False)
