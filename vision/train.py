@@ -159,7 +159,8 @@ def main():
                 lr = scheduler[global_step]
                 for p in optimizer.param_groups:
                     p["lr"] = lr
-                nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+                if args.grad_clip > 0:
+                    nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
                 optimizer.step()
                 optimizer.zero_grad()
                 global_step += 1
