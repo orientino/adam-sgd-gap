@@ -73,6 +73,7 @@ def main():
     parser.add_argument("--n_layers", type=int, default=6)
     parser.add_argument("--n_heads", type=int, default=6)
     parser.add_argument("--d_embed", type=int, default=384)
+    parser.add_argument("--run_name", type=str, required=True)
     parser.add_argument("--dir_output", type=str, required=True)
     parser.add_argument("--dir_data", type=str, required=True)
     parser.add_argument("--n_workers", type=int, default=8)
@@ -88,7 +89,8 @@ def main():
     torch.cuda.manual_seed(args.seed + rank)
     torch.backends.cudnn.benchmark = True
     if rank == 0:
-        os.makedirs(args.dir_output, exist_ok=True)
+        dir_output = os.path.join(args.dir_output, args.run_name)
+        os.makedirs(dir_output, exist_ok=True)
         wandb.init(project="adam-sgd-gap", mode="disabled" if args.debug else "online")
         wandb.config.update(args)
         wandb.config.update({"bs": args.bs * args.accum_steps}, allow_val_change=True)
@@ -225,10 +227,10 @@ def main():
                             if world_size > 1
                             else model.state_dict()
                         )
-                        torch.save(w, os.path.join(args.dir_output, "last.pth"))
+                        torch.save(w, os.path.join(dir_output, "last.pth"))
                         if vl_acc1 > best_acc:
                             best_acc = vl_acc1
-                            torch.save(w, os.path.join(args.dir_output, "best.pth"))
+                            torch.save(w, os.path.join(dir_output, "best.pth"))
                     model.train()
 
     if world_size > 1:
